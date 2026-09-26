@@ -1,0 +1,118 @@
+name: Resume Stage2 - GOTOOLCHAIN fix
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload_release:
+        description: 'Upload to Release'
+        required: false
+        default: 'true'
+      source_run_id:
+        description: 'Run ID containing istoreos-workspace artifact'
+        required: true
+        default: '36245347252'
+
+permissions:
+  contents: write
+
+env:
+  SOURCE_RUN_ID: ${{ github.event.inputs.source_run_id }}
+
+jobs:
+  stage2-resume:
+    name: Stage 2 Resume - Packages + Images
+    runs-on: ubuntu-22.04
+    timeout-minutes: 340
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Free disk space
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -y purge azure-cli ghc* zulu* llvm* firefox google* dotnet* powershell openjdk* mongodb* moby* || true
+        sudo -E apt-get -y autoremove --purge
+        sudo -E apt-get -y clean
+        df -hT
+
+    - name: Init build environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo -E apt-get update
+        sudo -E apt-get -y install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+          libmpc-dev libmpfr-dev libncurses-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev \
+          libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 \
+          python3-pip libpython3.10-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+          upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+        sudo timedatectl set-timezone "Asia/Shanghai"
+
+    - name: Download workspace artifact from previous run
+      uses: actions/download-artifact@main
+      with:
+        name: istoreos-workspace
+        path: ${{ github.workspace }}
+        run-id: ${{ env.SOURCE_RUN_ID }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract workspace
+      working-directory: ${{ github.workspace }}
+      run: |
+        ls -lh istoreos-workspace.tar.zst
+        zstd -T0 -d istoreos-workspace.tar.zst -o workspace.tar
+        tar -xf workspace.tar
+        rm -f workspace.tar istoreos-workspace.tar.zst
+        test -d istoreos/staging_dir/toolchain-*/ || { echo "toolchain missing!"; exit 1; }
+        test -f istoreos/.config || { echo ".config missing!"; exit 1; }
+        df -hT
+
+    - name: Patch GOTOOLCHAIN for new go.mod requirements
+      working-directory: ${{ github.workspace }}/istoreos
+      run: |
+        sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/' feeds/packages/lang/golang/golang-package.mk
+        grep -n "GOTOOLCHAIN" feeds/packages/lang/golang/golang-package.mk
+
+    - name: Compile packages and images
+      working-directory: ${{ github.workspace }}/istoreos
+      run: |
+        make -j$(nproc) || make -j1 V=s
+        echo "COMPILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        df -hT
+
+    - name: Check space and organize files
+      if: always()
+      working-directory: ${{ github.workspace }}/istoreos
+      run: |
+        cd bin/targets/mediatek/filogic 2>/dev/null || { echo "BUILD FAILED - no output"; exit 1; }
+        rm -rf packages
+        echo "====== build output ======"
+        ls -lh
+        mkdir -p $GITHUB_WORKSPACE/output
+        cp -f * $GITHUB_WORKSPACE/output/ 2>/dev/null || true
+        cd $GITHUB_WORKSPACE
+        echo "====== final artifacts ======"
+        ls -lh output/
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@main
+      with:
+        name: istoreos-rax3000m-emmc-${{ env.COMPILE_DATE }}
+        path: output/
+
+    - name: Upload to release
+      if: github.event.inputs.upload_release == 'true' && !cancelled()
+      uses: softprops/action-gh-release@master
+      with:
+        tag_name: istoreos-24.10.5-rax3000m-emmc-${{ env.COMPILE_DATE }}
+        files: output/*
+        body: |
+          iStoreOS 24.10.5 for CMCC RAX3000M (eMMC 算力版)
+          - Source: istoreos/istoreos @ istoreos-24.10 dcf11c8 (24.10.5-2025123110 同版)
+          - 内置: iStore / openclash / passwall / tailscale / rtp2httpd(IPTV) / docker / 中文界面
+          - emmc sysupgrade: istoreos-*-cmcc_rax3000m-squashfs-sysupgrade.itb
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
