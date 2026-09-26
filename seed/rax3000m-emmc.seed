@@ -10,6 +10,9 @@ CONFIG_TARGET_ROOTFS_PARTSIZE=1024
 CONFIG_LUCI_LANG_zh_Hans=y
 
 # --- networking / proxy ---
+# dnsmasq-full 替换 dnsmasq（openclash 依赖 full 版，二者冲突）
+# CONFIG_PACKAGE_dnsmasq is not set
+CONFIG_PACKAGE_dnsmasq-full=y
 CONFIG_PACKAGE_tailscale=y
 CONFIG_PACKAGE_luci-app-openclash=y
 CONFIG_PACKAGE_luci-app-passwall=y
