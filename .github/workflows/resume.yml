@@ -70,6 +70,15 @@ jobs:
         test -f istoreos/.config || { echo ".config missing!"; exit 1; }
         df -hT
 
+    - name: Fix dnsmasq / dnsmasq-full conflict
+      working-directory: ${{ github.workspace }}/istoreos
+      run: |
+        sed -i 's|^CONFIG_PACKAGE_dnsmasq=y$|# CONFIG_PACKAGE_dnsmasq is not set|' .config
+        grep -q '^CONFIG_PACKAGE_dnsmasq-full=y' .config || echo 'CONFIG_PACKAGE_dnsmasq-full=y' >> .config
+        make defconfig
+        echo "====== dnsmasq config check ======"
+        grep -E 'CONFIG_PACKAGE_dnsmasq' .config | head -5 || true
+
     - name: Patch GOTOOLCHAIN for new go.mod requirements
       working-directory: ${{ github.workspace }}/istoreos
       run: |
@@ -104,7 +113,7 @@ jobs:
         path: output/
 
     - name: Upload to release
-      if: github.event.inputs.upload_release == 'true' && !cancelled()
+      if: success() && github.event.inputs.upload_release == 'true'
       uses: softprops/action-gh-release@master
       with:
         tag_name: istoreos-24.10.5-rax3000m-emmc-${{ env.COMPILE_DATE }}
