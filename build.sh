@@ -19,5 +19,8 @@ EOF
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 
-# 3. Ensure luci-app-openclash gets installed (it lives in kenzok8 feed)
+# 3. Allow GOTOOLCHAIN auto-switch (geoview etc. need go >= 1.25, feed ships 1.23)
+sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/' feeds/packages/lang/golang/golang-package.mk
+
+# 4. Ensure luci-app-openclash gets installed (it lives in kenzok8 feed)
 exit 0
