@@ -16,8 +16,10 @@ env:
   DIY_SCRIPT: build.sh
 
 jobs:
-  build:
+  stage1-toolchain-kernel:
+    name: Stage 1 - Toolchain + Kernel
     runs-on: ubuntu-22.04
+    timeout-minutes: 340
 
     steps:
     - name: Checkout
@@ -63,7 +65,7 @@ jobs:
         chmod +x $GITHUB_WORKSPACE/$DIY_SCRIPT
         $GITHUB_WORKSPACE/$DIY_SCRIPT
 
-    - name: Load config and build
+    - name: Load config and download sources
       working-directory: ${{ github.workspace }}/istoreos
       run: |
         cp $GITHUB_WORKSPACE/$CONFIG_FILE .config
@@ -73,6 +75,91 @@ jobs:
         make download -j$(nproc)
         find dl -size -1025c -exec ls -l {} \;
         find dl -size -1025c -exec rm -f {} \;
+
+    - name: Compile tools
+      working-directory: ${{ github.workspace }}/istoreos
+      run: |
+        make tools/install -j$(nproc) || make tools/install -j1 V=s
+
+    - name: Compile toolchain
+      working-directory: ${{ github.workspace }}/istoreos
+      run: |
+        make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+
+    - name: Compile kernel
+      working-directory: ${{ github.workspace }}/istoreos
+      run: |
+        make target/compile -j$(nproc) || make target/compile -j1 V=s
+
+    - name: Pack workspace
+      working-directory: ${{ github.workspace }}
+      run: |
+        rm -rf istoreos/.git
+        tar -cf - istoreos | zstd -T0 -1 > istoreos-workspace.tar.zst
+        ls -lh istoreos-workspace.tar.zst
+        df -hT
+
+    - name: Upload workspace artifact
+      uses: actions/upload-artifact@main
+      with:
+        name: istoreos-workspace
+        path: istoreos-workspace.tar.zst
+        retention-days: 1
+        compression-level: 0
+
+  stage2-packages-images:
+    name: Stage 2 - Packages + Images
+    needs: stage1-toolchain-kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 340
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Free disk space
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+        sudo docker image prune --all --force
+        sudo -E apt-get -y purge azure-cli ghc* zulu* llvm* firefox google* dotnet* powershell openjdk* mongodb* moby* || true
+        sudo -E apt-get -y autoremove --purge
+        sudo -E apt-get -y clean
+        df -hT
+
+    - name: Init build environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo -E apt-get update
+        sudo -E apt-get -y install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+          bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib \
+          git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+          libmpc-dev libmpfr-dev libncurses-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev \
+          libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python3 \
+          python3-pip libpython3.10-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs \
+          upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+        sudo timedatectl set-timezone "Asia/Shanghai"
+
+    - name: Download workspace artifact
+      uses: actions/download-artifact@main
+      with:
+        name: istoreos-workspace
+        path: ${{ github.workspace }}
+
+    - name: Extract workspace
+      working-directory: ${{ github.workspace }}
+      run: |
+        ls -lh istoreos-workspace.tar.zst
+        zstd -T0 -d istoreos-workspace.tar.zst -o workspace.tar
+        tar -xf workspace.tar
+        rm -f workspace.tar istoreos-workspace.tar.zst
+        ls istoreos | head -20
+        test -d istoreos/staging_dir/toolchain-*/ || { echo "toolchain missing!"; exit 1; }
+        df -hT
+
+    - name: Compile packages and images
+      working-directory: ${{ github.workspace }}/istoreos
+      run: |
         make -j$(nproc) || make -j1 V=s
         echo "COMPILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
         df -hT
