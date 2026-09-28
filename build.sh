@@ -55,10 +55,15 @@ EOF
 ( cd "$PB/data" && tar czf "$PB/data.tar.gz" . )
 ( cd "$PB/CONTROL" && tar czf "$PB/control.tar.gz" . )
 echo "2.0" > "$PB/debian-binary"
-( cd "$PB" && tar czf "$IBDIR/packages/${FIXPKG}_1.0.0_all.ipk" debian-binary data.tar.gz control.tar.gz )
+mkdir -p "$PB/stage"
+cp "$PB/debian-binary" "$PB/data.tar.gz" "$PB/control.tar.gz" "$PB/stage/"
+# 关键：外层 tar 成员必须带 ./ 前缀（OpenWrt 的 ipkg-make-index.sh 按 ./control.tar.gz 查找）
+( cd "$PB/stage" && tar czf "$IBDIR/packages/${FIXPKG}_1.0.0_all.ipk" ./debian-binary ./data.tar.gz ./control.tar.gz )
 echo "----- 本地 ipk -----"
 ls -l "$IBDIR/packages/${FIXPKG}_1.0.0_all.ipk"
 tar tzf "$IBDIR/packages/${FIXPKG}_1.0.0_all.ipk"
+echo "----- data.tar.gz 内容 -----"
+tar tzvf "$PB/data.tar.gz"
 
 echo ">>> [4/10] 预下载商店 ipk 到本地 packages/，并强制重建索引"
 mkdir -p packages
@@ -77,6 +82,8 @@ set -e
 set +e
 echo "----- 索引里的关键包 -----"
 make package_list 2>&1 | grep -iE "luci-app-store |luci-lib-taskd |^taskd |^tar |libuci-lua|mount-utils|luci-lib-xterm|script-utils|coreutils-stty|$FIXPKG" | head -20
+echo "----- 本地 Packages 索引中是否收录修复包 -----"
+grep -A 4 "^Package: $FIXPKG$" packages/Packages || echo "(未收录！)"
 set -e
 
 echo ">>> [6/10] 构建镜像（仅预装商店 + 打洞修复包，并同时用 FILES 注入）"
