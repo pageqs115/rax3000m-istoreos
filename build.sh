@@ -13,7 +13,7 @@ PROFILE="jdcloud_re-ss-01"
 WS="$GITHUB_WORKSPACE"
 DST="$WS/istoreos/bin/targets/mediatek/filogic"
 
-echo ">>> [1/9] 下载 Kwrt ImageBuilder（约 330MB）"
+echo ">>> [1/10] 下载 Kwrt ImageBuilder（约 330MB）"
 rm -rf /tmp/ib && mkdir -p /tmp/ib
 cd /tmp/ib
 ok=0
@@ -29,13 +29,13 @@ IBDIR=$(ls -d /tmp/ib/kwrt-imagebuilder-* | head -1)
 echo ">>> ImageBuilder = $IBDIR"
 cd "$IBDIR"
 
-echo ">>> [2/9] 修复 feeds：Kwrt 的 file:// 本地路径在 GitHub Runner 上不存在，改写为公网 https"
+echo ">>> [2/10] 修复 feeds：Kwrt 的 file:// 本地路径在 GitHub Runner 上不存在，改写为公网 https"
 cp -f repositories.conf repositories.conf.orig
 sed -i 's|file://www/wwwroot/dl.openwrt.ai|https://dl.openwrt.ai|g' repositories.conf
 echo "----- 修复后的 repositories.conf -----"
 cat repositories.conf
 
-echo ">>> [3/9] 预下载商店 ipk 到本地 packages/（双保险）"
+echo ">>> [3/10] 预下载商店 ipk 到本地 packages/（双保险）"
 mkdir -p packages
 for P in luci-app-store_0.2.1-r1_all.ipk luci-lib-taskd_1.0.25-r1_all.ipk taskd_1.0.3-r1_all.ipk; do
   if [ ! -f "packages/$P" ]; then
@@ -46,7 +46,7 @@ done
 # 强制重建本地索引 + 拉取远端索引
 rm -f packages/Packages packages/Packages.gz
 
-echo ">>> [4/9] 刷新包索引（本地 + 远端）"
+echo ">>> [4/10] 刷新包索引（本地 + 远端）"
 set +e
 make package_reload 2>&1 | tail -20
 set -e
@@ -55,7 +55,7 @@ set +e
 make package_list 2>&1 | grep -iE "luci-app-store |luci-lib-taskd |^taskd |^tar |libuci-lua|mount-utils|luci-lib-xterm|script-utils|coreutils-stty" | head -20
 set -e
 
-echo ">>> [5/9] 构建镜像（仅预装商店 + 内置打洞修复）"
+echo ">>> [5/10] 构建镜像（仅预装商店 + 内置打洞修复）"
 set +e
 make image \
   PROFILE="$PROFILE" \
@@ -83,7 +83,7 @@ MANIFEST=$(ls "$SRC"/*.manifest | head -1)
 echo "=== 实际安装的 luci-app / 主题 ==="
 grep -iE "^luci-app|^luci-theme|^luci " "$MANIFEST" | head -30 || true
 
-echo ">>> [6/9] 商店依赖完整性校验"
+echo ">>> [6/10] 商店依赖完整性校验"
 FAIL=0
 for P in luci-app-store luci-lib-taskd taskd tar libuci-lua mount-utils luci-lib-xterm script-utils coreutils-stty; do
   if grep -q "^$P " "$MANIFEST"; then
@@ -98,17 +98,28 @@ if [ "$FAIL" = "1" ]; then
 fi
 echo "STORE_CHECK: PASS"
 
-echo ">>> [7/9] 拷贝产物到 Stage2 期望目录"
+echo ">>> [7/10] 校验注入的自定义文件（打洞修复脚本是否真的进了 rootfs）"
+TD="$IBDIR/build_dir/target-aarch64_cortex-a53_musl/root-qualcommax"
+[ -d "$TD" ] || TD="$IBDIR/build_dir/target-aarch64_cortex-a53_musl/root-qualcommax-orig"
+echo "TARGET_DIR = $TD"
+ls -la "$TD/etc/uci-defaults/" 2>/dev/null || echo "(no uci-defaults dir)"
+ls -la "$TD/etc/hotplug.d/iface/" 2>/dev/null || echo "(no hotplug iface dir)"
+[ -f "$TD/etc/uci-defaults/99-tailscale-holepunch" ] || { echo "FILES_CHECK: FAIL - 打洞脚本未注入"; exit 1; }
+[ -f "$TD/etc/hotplug.d/iface/99-tailscale-zone" ] || { echo "FILES_CHECK: FAIL - hotplug 脚本未注入"; exit 1; }
+grep -q "Allow-Tailscale" "$TD/etc/uci-defaults/99-tailscale-holepunch" || { echo "FILES_CHECK: FAIL - 脚本内容异常"; exit 1; }
+echo "FILES_CHECK: PASS"
+
+echo ">>> [8/10] 拷贝产物到 Stage2 期望目录"
 mkdir -p "$DST"
 cp -f "$SRC"/* "$DST"/ 2>/dev/null || true
 rm -rf "$DST/packages"
 ls -lh "$DST"
 
-echo ">>> [8/9] 造 toolchain / dl 目录（骗过 Stage2 的存在性检查）"
+echo ">>> [9/10] 造 toolchain / dl 目录（骗过 Stage2 的存在性检查）"
 mkdir -p "$WS/istoreos/staging_dir/toolchain-aarch64_gnu_dummy"
 mkdir -p "$WS/istoreos/dl"
 
-echo ">>> [9/9] 让后续 make 步骤空转"
+echo ">>> [10/10] 让后续 make 步骤空转"
 cat > "$WS/istoreos/Makefile" <<'MK'
 # 镜像已由 build.sh 通过 Kwrt ImageBuilder 生成；这里让后续 make 调用空转
 .DEFAULT_GOAL := all
