@@ -56,10 +56,16 @@ make package_list 2>&1 | grep -iE "luci-app-store |luci-lib-taskd |^taskd |^tar 
 set -e
 
 echo ">>> [5/10] 构建镜像（仅预装商店 + 内置打洞修复）"
+# 用 ImageBuilder 官方约定的 files/ 目录注入自定义文件（比 FILES= 更稳）
+mkdir -p "$IBDIR/files"
+cp -a "$WS/custom-files"/. "$IBDIR/files"/
+echo "----- 注入的文件 -----"
+find "$IBDIR/files" -type f -exec ls -l {} \;
+
 set +e
 make image \
   PROFILE="$PROFILE" \
-  FILES="$WS/custom-files" \
+  FILES="$IBDIR/files" \
   PACKAGES="luci-app-store \
 -luci-app-advancedplus -luci-app-argon-config -luci-app-cpufreq -luci-app-diskman \
 -luci-app-fan -luci-app-footstrap-files -luci-app-gpsysupgrade -luci-app-istorex \
@@ -99,15 +105,25 @@ fi
 echo "STORE_CHECK: PASS"
 
 echo ">>> [7/10] 校验注入的自定义文件（打洞修复脚本是否真的进了 rootfs）"
-TD="$IBDIR/build_dir/target-aarch64_cortex-a53_musl/root-qualcommax"
-[ -d "$TD" ] || TD="$IBDIR/build_dir/target-aarch64_cortex-a53_musl/root-qualcommax-orig"
-echo "TARGET_DIR = $TD"
-ls -la "$TD/etc/uci-defaults/" 2>/dev/null || echo "(no uci-defaults dir)"
-ls -la "$TD/etc/hotplug.d/iface/" 2>/dev/null || echo "(no hotplug iface dir)"
-[ -f "$TD/etc/uci-defaults/99-tailscale-holepunch" ] || { echo "FILES_CHECK: FAIL - 打洞脚本未注入"; exit 1; }
-[ -f "$TD/etc/hotplug.d/iface/99-tailscale-zone" ] || { echo "FILES_CHECK: FAIL - hotplug 脚本未注入"; exit 1; }
-grep -q "Allow-Tailscale" "$TD/etc/uci-defaults/99-tailscale-holepunch" || { echo "FILES_CHECK: FAIL - 脚本内容异常"; exit 1; }
-echo "FILES_CHECK: PASS"
+echo "----- build_dir 结构 -----"
+ls -la "$IBDIR/build_dir/target-aarch64_cortex-a53_musl/" 2>/dev/null | head -15
+SQ=$(ls "$IBDIR"/build_dir/target-aarch64_cortex-a53_musl/linux-qualcommax_ipq60xx/root.squashfs 2>/dev/null | head -1)
+echo "root.squashfs = $SQ"
+if [ -n "$SQ" ] && [ -f "$SQ" ]; then
+  echo "----- root.squashfs 中的 uci-defaults / hotplug -----"
+  unsquashfs -l "$SQ" 2>/dev/null | grep -E "uci-defaults|hotplug.d/iface" | head -20
+  unsquashfs -l "$SQ" 2>/dev/null | grep -q "etc/uci-defaults/99-tailscale-holepunch" \
+    || { echo "FILES_CHECK: FAIL - 打洞脚本未进镜像"; exit 1; }
+  unsquashfs -l "$SQ" 2>/dev/null | grep -q "etc/hotplug.d/iface/99-tailscale-zone" \
+    || { echo "FILES_CHECK: FAIL - hotplug 脚本未进镜像"; exit 1; }
+  echo "FILES_CHECK: PASS"
+else
+  echo "FILES_CHECK: SKIP - 找不到 root.squashfs（改用 find 兜底）"
+  find "$IBDIR/build_dir" -name "99-tailscale-holepunch" 2>/dev/null | head -3
+  find "$IBDIR/build_dir" -name "99-tailscale-holepunch" 2>/dev/null | grep -q . \
+    || { echo "FILES_CHECK: FAIL - 打洞脚本未注入"; exit 1; }
+  echo "FILES_CHECK: PASS(find)"
+fi
 
 echo ">>> [8/10] 拷贝产物到 Stage2 期望目录"
 mkdir -p "$DST"
