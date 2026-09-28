@@ -1,0 +1,18 @@
+#!/bin/sh
+# tailscale0 每次起来都确认一次已并入 lan 防火墙 zone
+# （防止用户重置配置 / 后台改防火墙后再次被 fw4 默认策略 drop）
+[ "$ACTION" = "ifup" ] || exit 0
+case "$INTERFACE" in
+	tailscale*) ;;
+	*) exit 0 ;;
+esac
+
+[ -x /sbin/uci ] || exit 0
+
+if ! uci -q get firewall.@zone[0].network 2>/dev/null | grep -qw tailscale; then
+	uci add_list firewall.@zone[0].network='tailscale'
+	uci commit firewall
+	/etc/init.d/firewall reload >/dev/null 2>&1 &
+fi
+
+exit 0

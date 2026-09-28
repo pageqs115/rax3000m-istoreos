@@ -1,0 +1,20 @@
+#!/bin/sh
+# PPPoE auto-dial: Shaoxing Telecom (写入固件, 首次开机自动配置 WAN 拨号)
+# 保持镜像默认的 WAN 口 device 不变，只切换 proto 并填入账号
+if ! uci -q get network.wan >/dev/null; then
+    uci -q set network.wan=interface
+    uci -q set network.wan.device='eth1'
+fi
+uci set network.wan.proto='pppoe'
+uci set network.wan.username='057520952898'
+uci set network.wan.password='zj034170'
+uci set network.wan.ipv6='auto'
+uci set network.wan.keepalive='5 5'
+uci set network.wan.peerdns='0'
+uci -q add_list network.wan.dns='223.5.5.5'
+uci -q add_list network.wan.dns='119.29.29.29'
+uci commit network
+
+# 重启 wan 接口让拨号立即生效（首次开机 tailscale/防火墙脚本之后执行）
+(/etc/init.d/network restart >/dev/null 2>&1 || ifup wan >/dev/null 2>&1) &
+exit 0
